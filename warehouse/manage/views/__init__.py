@@ -2184,6 +2184,11 @@ def delete_project(project, request):
             recipient_role=contributor_role,
         )
 
+    # Delete all role invitations for this project
+    (request.db.query(RoleInvitation)
+        .filter(RoleInvitation.project == project)
+        .delete())
+
     remove_project(project, request)
 
     return HTTPSeeOther(request.route_path("manage.projects"))
