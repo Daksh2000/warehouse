@@ -119,13 +119,7 @@ class TestDatabaseOrganizationService:
     ):
         send_email = pretend.call_recorder(lambda *a, **kw: None)
         monkeypatch.setattr(
-            services, "send_admin_new_organization_approved_email", send_email
-        )
-        monkeypatch.setattr(
             services, "send_new_organization_approved_email", send_email
-        )
-        monkeypatch.setattr(
-            services, "send_admin_new_organization_declined_email", send_email
         )
         monkeypatch.setattr(
             services, "send_new_organization_declined_email", send_email
@@ -203,24 +197,8 @@ class TestDatabaseOrganizationService:
         assert send_email.calls == [
             pretend.call(
                 db_request,
-                admin,
-                organization_name=organization.name,
-                initiator_username=organization_application.submitted_by.username,
-                message="",
-            ),
-            pretend.call(
-                db_request,
                 organization_application.submitted_by,
                 organization_name=organization.name,
-                message="",
-            ),
-            pretend.call(
-                db_request,
-                admin,
-                organization_name=competing_organization_application.name,
-                initiator_username=(
-                    competing_organization_application.submitted_by.username
-                ),
                 message="",
             ),
             pretend.call(
@@ -288,11 +266,6 @@ class TestDatabaseOrganizationService:
     ):
         send_email = pretend.call_recorder(lambda *a, **kw: None)
         monkeypatch.setattr(
-            services,
-            "send_admin_new_organization_moreinformationneeded_email",
-            send_email,
-        )
-        monkeypatch.setattr(
             services, "send_new_organization_moreinformationneeded_email", send_email
         )
 
@@ -312,13 +285,6 @@ class TestDatabaseOrganizationService:
         assert send_email.calls == [
             pretend.call(
                 db_request,
-                admin,
-                organization_name=organization_application.name,
-                initiator_username=organization_application.submitted_by.username,
-                message="",
-            ),
-            pretend.call(
-                db_request,
                 organization_application.submitted_by,
                 organization_name=organization_application.name,
                 organization_application_id=organization_application.id,
@@ -330,9 +296,6 @@ class TestDatabaseOrganizationService:
         self, db_request, organization_service, monkeypatch
     ):
         send_email = pretend.call_recorder(lambda *a, **kw: None)
-        monkeypatch.setattr(
-            services, "send_admin_new_organization_declined_email", send_email
-        )
         monkeypatch.setattr(
             services, "send_new_organization_declined_email", send_email
         )
@@ -347,13 +310,6 @@ class TestDatabaseOrganizationService:
 
         assert organization_application.status == OrganizationApplicationStatus.Declined
         assert send_email.calls == [
-            pretend.call(
-                db_request,
-                admin,
-                organization_name=organization_application.name,
-                initiator_username=organization_application.submitted_by.username,
-                message="",
-            ),
             pretend.call(
                 db_request,
                 organization_application.submitted_by,
@@ -667,6 +623,51 @@ class TestDatabaseOrganizationService:
             )
             .count()
         )
+
+    def test_rename_organization_back(self, organization_service, db_request):
+        organization = OrganizationFactory.create()
+        original_name = organization.name
+
+        organization_service.rename_organization(organization.id, "some_new_name")
+        assert organization.name == "some_new_name"
+
+        db_organization = organization_service.get_organization(organization.id)
+        assert db_organization.name == "some_new_name"
+
+        organization_service.db.flush()
+        assert (
+            db_request.db.query(OrganizationNameCatalog)
+            .filter(
+                OrganizationNameCatalog.normalized_name == organization.normalized_name
+            )
+            .count()
+        ) == 1
+
+        organization_service.rename_organization(organization.id, original_name)
+        assert organization.name == original_name
+
+        db_organization = organization_service.get_organization(organization.id)
+        assert db_organization.name == original_name
+
+        organization_service.db.flush()
+        assert (
+            db_request.db.query(OrganizationNameCatalog)
+            .filter(
+                OrganizationNameCatalog.normalized_name == organization.normalized_name
+            )
+            .count()
+        ) == 1
+
+    def test_rename_fails_if_entry_exists_for_another_org(
+        self, organization_service, db_request
+    ):
+        conflicting_org = OrganizationFactory.create()
+        organization = OrganizationFactory.create()
+
+        with pytest.raises(ValueError):  # noqa: PT011
+            organization_service.rename_organization(
+                organization.id, conflicting_org.name
+            )
 
     def test_update_organization(self, organization_service, db_request):
         organization = OrganizationFactory.create()

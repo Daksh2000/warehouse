@@ -16,9 +16,11 @@ from paginate_sqlalchemy import SqlalchemyOrmPage as SQLAlchemyORMPage
 from pyramid.httpexceptions import HTTPBadRequest, HTTPNotFound, HTTPSeeOther
 from pyramid.view import view_config
 from sqlalchemy import or_
+from sqlalchemy.orm import joinedload
 
 from warehouse.accounts.interfaces import IUserService
 from warehouse.authnz import Permissions
+from warehouse.manage.forms import OrganizationNameMixin, SaveOrganizationForm
 from warehouse.organizations.interfaces import IOrganizationService
 from warehouse.organizations.models import (
     Organization,
@@ -27,6 +29,27 @@ from warehouse.organizations.models import (
     OrganizationType,
 )
 from warehouse.utils.paginate import paginate_url_factory
+
+
+def _turbo_mode(request):
+    next_organization_application = (
+        request.db.query(OrganizationApplication)
+        .filter(OrganizationApplication.status == "submitted")
+        .order_by(OrganizationApplication.submitted)
+        .first()
+    )
+    if next_organization_application:
+        return HTTPSeeOther(
+            request.route_path(
+                "admin.organization_application.detail",
+                organization_application_id=next_organization_application.id,
+            )
+        )
+    else:
+        request.session.flash(
+            "No more Organization Applications to review!", queue="success"
+        )
+        return HTTPSeeOther(request.route_path("admin.dashboard"))
 
 
 @view_config(
@@ -152,6 +175,45 @@ def organization_detail(request):
 
 
 @view_config(
+    route_name="admin.organization.rename",
+    require_methods=["POST"],
+    permission=Permissions.AdminOrganizationsNameWrite,
+    has_translations=True,
+    uses_session=True,
+    require_csrf=True,
+)
+def organization_rename(request):
+    organization_service = request.find_service(IOrganizationService, context=None)
+
+    organization_id = request.matchdict["organization_id"]
+    organization = organization_service.get_organization(organization_id)
+    if organization is None:
+        raise HTTPNotFound
+
+    old_organization_name = organization.name
+    new_organization_name = request.params.get("new_organization_name")
+
+    try:
+        organization_service.rename_organization(organization_id, new_organization_name)
+    except ValueError as exc:
+        request.session.flash(exc.args[0], queue="error")
+        return HTTPSeeOther(
+            request.route_path(
+                "admin.organization.detail", organization_id=organization.id
+            )
+        )
+
+    request.session.flash(
+        f'"{old_organization_name}" organization renamed "{new_organization_name}"',
+        queue="success",
+    )
+
+    return HTTPSeeOther(
+        request.route_path("admin.organization.detail", organization_id=organization.id)
+    )
+
+
+@view_config(
     route_name="admin.organization_application.list",
     renderer="admin/organization_applications/list.html",
     permission=Permissions.AdminOrganizationsRead,
@@ -244,11 +306,22 @@ def organization_applications_list(request):
                     organization_applications_query.filter(filter_or_subfilters)
                 )
 
+    organization_applications_query = organization_applications_query.options(
+        joinedload(OrganizationApplication.observations)
+    )
+
     return {
         "organization_applications": organization_applications_query.all(),
         "query": q,
         "terms": terms,
     }
+
+
+class OrganizationApplicationForm(OrganizationNameMixin, SaveOrganizationForm):
+    def __init__(self, *args, organization_service, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.organization_service = organization_service
+        self.user = user
 
 
 @view_config(
@@ -271,6 +344,21 @@ def organization_application_detail(request):
     if organization_application is None:
         raise HTTPNotFound
 
+    form = OrganizationApplicationForm(
+        request.POST if request.method == "POST" else None,
+        organization_application,
+        organization_service=organization_service,
+        user=request.user,
+    )
+
+    if request.method == "POST" and form.validate():
+        form.populate_obj(organization_application)
+        request.session.flash(
+            f"Application for {organization_application.name!r} updated",
+            queue="success",
+        )
+        return HTTPSeeOther(location=request.current_route_path())
+
     conflicting_applications = (
         request.db.query(OrganizationApplication)
         .filter(
@@ -286,6 +374,7 @@ def organization_application_detail(request):
 
     return {
         "organization_application": organization_application,
+        "form": form,
         "conflicting_applications": conflicting_applications,
         "user": user,
     }
@@ -308,14 +397,6 @@ def organization_application_approve(request):
     )
     if organization_application is None:
         raise HTTPNotFound
-    elif organization_application.name != request.params.get("organization_name"):
-        request.session.flash("Wrong confirmation input", queue="error")
-        return HTTPSeeOther(
-            request.route_path(
-                "admin.organization_application.detail",
-                organization_application_id=organization_application.id,
-            )
-        )
 
     organization = organization_service.approve_organization_application(
         organization_application.id, request
@@ -324,6 +405,9 @@ def organization_application_approve(request):
     request.session.flash(
         f'Request for "{organization.name}" organization approved', queue="success"
     )
+
+    if request.params.get("organization_applications_turbo_mode") == "true":
+        return _turbo_mode(request)
 
     return HTTPSeeOther(
         request.route_path("admin.organization.detail", organization_id=organization.id)
@@ -347,14 +431,6 @@ def organization_application_defer(request):
     )
     if organization_application is None:
         raise HTTPNotFound
-    elif organization_application.name != request.params.get("organization_name"):
-        request.session.flash("Wrong confirmation input", queue="error")
-        return HTTPSeeOther(
-            request.route_path(
-                "admin.organization_application.detail",
-                organization_application_id=organization_application.id,
-            )
-        )
 
     organization_service.defer_organization_application(
         organization_application.id, request
@@ -364,6 +440,9 @@ def organization_application_defer(request):
         f'Request for "{organization_application.name}" organization deferred',
         queue="success",
     )
+
+    if request.params.get("organization_applications_turbo_mode") == "true":
+        return _turbo_mode(request)
 
     return HTTPSeeOther(
         request.route_path(
@@ -390,14 +469,6 @@ def organization_application_request_more_information(request):
     )
     if organization_application is None:
         raise HTTPNotFound
-    elif organization_application.name != request.params.get("organization_name"):
-        request.session.flash("Wrong confirmation input", queue="error")
-        return HTTPSeeOther(
-            request.route_path(
-                "admin.organization_application.detail",
-                organization_application_id=organization_application.id,
-            )
-        )
 
     organization_service.request_more_information(organization_application.id, request)
 
@@ -408,6 +479,9 @@ def organization_application_request_more_information(request):
         ),
         queue="success",
     )
+
+    if request.params.get("organization_applications_turbo_mode") == "true":
+        return _turbo_mode(request)
 
     return HTTPSeeOther(
         request.route_path(
@@ -434,14 +508,6 @@ def organization_application_decline(request):
     )
     if organization_application is None:
         raise HTTPNotFound
-    elif organization_application.name != request.params.get("organization_name"):
-        request.session.flash("Wrong confirmation input", queue="error")
-        return HTTPSeeOther(
-            request.route_path(
-                "admin.organization_application.detail",
-                organization_application_id=organization_application.id,
-            )
-        )
 
     organization_service.decline_organization_application(
         organization_application.id, request
@@ -451,6 +517,9 @@ def organization_application_decline(request):
         f'Request for "{organization_application.name}" organization declined',
         queue="success",
     )
+
+    if request.params.get("organization_applications_turbo_mode") == "true":
+        return _turbo_mode(request)
 
     return HTTPSeeOther(
         request.route_path(

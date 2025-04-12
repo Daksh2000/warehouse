@@ -29,6 +29,11 @@ def includeme(config):
         "/admin/organizations/{organization_id}/",
         domain=warehouse,
     )
+    config.add_route(
+        "admin.organization.rename",
+        "/admin/organizations/{organization_id}/rename/",
+        domain=warehouse,
+    )
 
     config.add_route(
         "admin.organization_application.list",
@@ -85,6 +90,13 @@ def includeme(config):
         "/admin/users/{username}/add_email/",
         domain=warehouse,
         factory="warehouse.accounts.models:UserFactory",
+        traverse="/{username}",
+    )
+    config.add_route(
+        "admin.user.email_domain_check",
+        "/admin/users/{username}/email_domain_check/",
+        factory="warehouse.accounts.models:UserFactory",
+        domain=warehouse,
         traverse="/{username}",
     )
     config.add_route(

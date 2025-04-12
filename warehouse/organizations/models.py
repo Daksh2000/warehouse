@@ -379,6 +379,7 @@ class Organization(OrganizationMixin, HasEvents, db.Model):
                 (
                     Permissions.AdminOrganizationsRead,
                     Permissions.AdminOrganizationsWrite,
+                    Permissions.AdminOrganizationsNameWrite,
                 ),
             ),
             (Allow, "group:moderators", Permissions.AdminOrganizationsRead),
@@ -522,6 +523,17 @@ class OrganizationApplicationStatus(enum.StrEnum):
     Approved = "approved"
 
 
+class OrganizationMembershipSize(enum.StrEnum):
+    none = ""
+    solo = "1"
+    smol = "2-5"
+    small = "6-10"
+    mid = "11-25"
+    medium = "26-50"
+    lorge = "51-100"
+    large = "100+"
+
+
 class OrganizationApplication(OrganizationMixin, HasObservations, db.Model):
     __tablename__ = "organization_applications"
     __repr__ = make_repr("name")
@@ -551,6 +563,17 @@ class OrganizationApplication(OrganizationMixin, HasObservations, db.Model):
         ),
         server_default=OrganizationApplicationStatus.Submitted,
         comment="Status of the request",
+    )
+
+    usage: Mapped[str | None] = mapped_column(
+        comment="Description of how the applicant plans to use Organizations",
+    )
+    membership_size: Mapped[enum.Enum | None] = mapped_column(
+        Enum(
+            OrganizationMembershipSize,
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        comment="Anticipated size of Organization Membership",
     )
 
     organization_id: Mapped[UUID | None] = mapped_column(
@@ -606,6 +629,10 @@ class OrganizationNameCatalog(db.Model):
             "normalized_name",
             "organization_id",
             name="_organization_name_catalog_normalized_name_organization_uc",
+        ),
+        UniqueConstraint(
+            "normalized_name",
+            name="_organization_name_catalog_normalized_name_uc",
         ),
     )
 

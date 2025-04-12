@@ -35,6 +35,11 @@ def test_includeme():
             domain=warehouse,
         ),
         pretend.call(
+            "admin.organization.rename",
+            "/admin/organizations/{organization_id}/rename/",
+            domain=warehouse,
+        ),
+        pretend.call(
             "admin.organization_application.list",
             "/admin/organization_applications/",
             domain=warehouse,
@@ -85,6 +90,13 @@ def test_includeme():
         pretend.call(
             "admin.user.add_email",
             "/admin/users/{username}/add_email/",
+            domain=warehouse,
+            factory="warehouse.accounts.models:UserFactory",
+            traverse="/{username}",
+        ),
+        pretend.call(
+            "admin.user.email_domain_check",
+            "/admin/users/{username}/email_domain_check/",
             domain=warehouse,
             factory="warehouse.accounts.models:UserFactory",
             traverse="/{username}",
